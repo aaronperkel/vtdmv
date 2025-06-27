@@ -43,17 +43,26 @@ def navigate_to_services(driver):
     print("Navigating to services...")
     driver.get(BASE_URL)
 
-    # Click "Schedule an Appointment" button
-    click_element(driver, By.XPATH, "//button[contains(text(),'Schedule an Appointment')]")
-    print("Clicked 'Schedule an Appointment'")
+    # Click "Schedule an Appointment" button - this is actually a div
+    # The text "Schedule an Appointment" is in a nested div with class "serviceprofilelabel"
+    # The clickable parent div has class "serviceprofilebutton"
+    click_element(driver, By.XPATH, "//div[contains(@class, 'serviceprofilelabel') and normalize-space(text())='Schedule an Appointment']/ancestor::div[contains(@class,'serviceprofilebutton')][1]")
+    print("Clicked 'Schedule an Appointment' (div)")
+    time.sleep(1.5) # Allow time for JS to trigger next action and page to load. Increased slightly.
 
     # Click "Registration/Title" service category
-    click_element(driver, By.XPATH, "//div[contains(@class, 'service-category-name') and contains(text(), 'Registration/Title')]")
+    # The clickable element has classes "QflowObjectItem" and "displaydata-text", and a "data-id" attribute.
+    click_element(driver, By.XPATH, "//div[contains(@class, 'QflowObjectItem') and contains(@class, 'displaydata-text') and @data-id='Registration/Title']")
     print("Clicked 'Registration/Title'")
+    time.sleep(1.5) # Allow time for JS to trigger next action and page to load
+
 
     # Click "Registrations (New, Transfer, Out of State)" service
-    click_element(driver, By.XPATH, "//div[contains(@class, 'service-name') and contains(text(), 'Registrations (New, Transfer, Out of State)')]")
+    # Similar structure to the above.
+    click_element(driver, By.XPATH, "//div[contains(@class, 'QflowObjectItem') and contains(@class, 'displaydata-text') and @data-id='Registrations (New, Transfer, Out of State)']")
     print("Clicked 'Registrations (New, Transfer, Out of State)'")
+    time.sleep(1.5) # Allow time for JS to trigger next action and page to load
+
     print("Navigation to service selection complete.")
 
 def get_available_locations(driver):
