@@ -58,26 +58,47 @@ def navigate_to_services(driver):
 
 
     # Click "Registrations (New, Transfer, Out of State)" service
-    # Similar structure to the above.
-    click_element(driver, By.XPATH, "//div[contains(@class, 'QflowObjectItem') and contains(@class, 'displaydata-text') and @data-id='Registrations (New, Transfer, Out of State)']")
-    print("Clicked 'Registrations (New, Transfer, Out of State)'")
+    # The data-id for this is "34-"
+    click_element(driver, By.XPATH, "//div[contains(@class, 'QflowObjectItem') and contains(@class, 'displaydata-text') and @data-id='34-']")
+    print("Clicked 'Registrations (New, Transfer, Out of State)' (data-id='34-')")
     time.sleep(1.5) # Allow time for JS to trigger next action and page to load
 
-    print("Navigation to service selection complete.")
+    print("Navigation to office selection complete.")
 
 def get_available_locations(driver):
-    """Gets a list of available DMV locations."""
+    """Gets a list of available DMV locations and their data-ids."""
     print("Fetching available locations...")
+    locations_data = []
     try:
-        location_elements = WebDriverWait(driver, 20).until(
-            EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class,'location-name-container')]//div[contains(@class,'location-name')]"))
+        # Locations are divs with class "QflowObjectItem displaydata-text" and a "data-id"
+        # The name is in a child div with class "center-textDiv"
+        location_elements_outers = WebDriverWait(driver, 20).until(
+            EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'QflowObjectItem') and contains(@class, 'displaydata-text') and @data-id]"))
         )
-        locations = [loc.text.strip() for loc in location_elements if loc.text.strip()]
-        if not locations:
-            print("No locations found. The page structure might have changed.")
+        if not location_elements_outers:
+            print("No location elements found. The page structure might have changed.")
             return []
-        print(f"Found locations: {locations}")
-        return locations
+
+        for outer_div in location_elements_outers:
+            data_id = outer_div.get_attribute("data-id")
+            try:
+                name_div = outer_div.find_element(By.XPATH, ".//div[contains(@class, 'center-textDiv')]")
+                full_text = name_div.text.strip()
+                # Location name is usually the first line before the address details
+                location_name = full_text.split('\n')[0].strip()
+                if location_name and data_id:
+                    locations_data.append({"name": location_name, "data_id": data_id})
+            except NoSuchElementException:
+                print(f"Could not find name_div for an element with data-id {data_id}")
+            except Exception as e_inner:
+                print(f"Error processing a location element: {e_inner}")
+
+        if not locations_data:
+            print("No locations with names and data-ids found.")
+            return []
+
+        print(f"Found locations: {locations_data}")
+        return locations_data
     except TimeoutException:
         print("Error: Could not find location elements on the page.")
         return []
@@ -85,175 +106,100 @@ def get_available_locations(driver):
         print(f"Error fetching locations: {e}")
         return []
 
-def check_location_appointments(driver, location_name):
+def check_location_appointments(driver, location_info):
     """Checks a specific location for appointments within the next DAYS_TO_CHECK."""
-    print(f"Checking appointments for: {location_name}")
+    location_name = location_info["name"]
+    location_data_id = location_info["data_id"]
+    print(f"Checking appointments for: {location_name} (data-id: {location_data_id})")
     found_appointments = []
 
     try:
-        # Click on the location
-        click_element(driver, By.XPATH, f"//div[contains(@class,'location-name') and contains(text(),'{location_name}')]/ancestor::button")
+        # Click on the location using its data-id
+        click_element(driver, By.XPATH, f"//div[contains(@class, 'QflowObjectItem') and contains(@class, 'displaydata-text') and @data-id='{location_data_id}']")
         print(f"Clicked location: {location_name}")
+        time.sleep(1.5) # Allow time for calendar page to load
     except Exception as e:
-        print(f"Could not click on location {location_name}. It might be unavailable or there's a page load issue.")
-        # Attempt to go back to location selection if possible
+        print(f"Could not click on location {location_name} (data-id: {location_data_id}). It might be unavailable or there's a page load issue: {e}")
+        # Attempt to go back to location selection if possible (though the new back button is more reliable)
         try:
-            back_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Back to Locations') or contains(text(), 'Change Location')]")
-            back_button.click()
+            click_element(driver, By.ID, "BackButton")
+            print("Clicked 'Back' button (ID: BackButton) after failing to click location.")
             time.sleep(1)
-        except NoSuchElementException:
-            print("Could not find a button to go back to location selection.")
+        except Exception as e_back:
+            print(f"Could not find or click 'Back' button (ID: BackButton) after failing to click location: {e_back}")
         return found_appointments # Skip this location
 
-    time.sleep(2) # Wait for calendar to potentially load
-
-    today = datetime.now()
-    for i in range(DAYS_TO_CHECK + 1): # Check today + next DAYS_TO_CHECK days
-        current_date = today + timedelta(days=i)
-        # Skip weekends (Saturday=5, Sunday=6)
-        if current_date.weekday() >= 5:
-            print(f"Skipping weekend: {current_date.strftime('%Y-%m-%d')}")
-            continue
-
-        print(f"Checking date: {current_date.strftime('%Y-%m-%d')}")
-
-        # Navigate calendar if necessary (the site seems to show one month at a time)
-        # Check if the current month/year of the calendar matches current_date
-        try:
-            calendar_header_element = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'p-datepicker-title')]"))
-            )
-            calendar_month_year_str = calendar_header_element.text.strip() # e.g., "July 2024"
-            calendar_month_year = datetime.strptime(calendar_month_year_str, "%B %Y")
-
-            while calendar_month_year.year < current_date.year or \
-                  (calendar_month_year.year == current_date.year and calendar_month_year.month < current_date.month):
-                print(f"Navigating to next month. Calendar shows: {calendar_month_year_str}, Target: {current_date.strftime('%B %Y')}")
-                click_element(driver, By.XPATH, "//button[contains(@class,'p-datepicker-next')]")
-                time.sleep(0.5) # Brief pause for calendar update
-                calendar_header_element = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'p-datepicker-title')]"))
-                )
-                calendar_month_year_str = calendar_header_element.text.strip()
-                calendar_month_year = datetime.strptime(calendar_month_year_str, "%B %Y")
-
-        except TimeoutException:
-            print("Could not find calendar header to verify month/year. Proceeding with current view.")
-        except Exception as e:
-            print(f"Error navigating calendar: {e}")
-            # Continue trying to find dates in the current view
-
-
-        # Find date cells that are not disabled and match the day
-        date_xpath = f"//span[contains(@class,'p-datepicker-day') and not(contains(@class,'p-disabled')) and text()='{current_date.day}']"
-
-        try:
-            available_date_elements = driver.find_elements(By.XPATH, date_xpath)
-            if not available_date_elements:
-                print(f"No available slots for {location_name} on {current_date.strftime('%Y-%m-%d')} (day {current_date.day}).")
-                continue
-
-            for date_element in available_date_elements:
-                # Ensure the date belongs to the current month, not previous/next month's preview
-                parent_td = date_element.find_element(By.XPATH, "..")
-                if 'p-datepicker-other-month' in parent_td.get_attribute('class'):
-                    continue
-
-                try:
-                    date_element.click()
-                    print(f"Clicked date {current_date.strftime('%Y-%m-%d')} for {location_name}")
-                    time.sleep(2) # Wait for time slots to load
-
-                    # Check for available time slots
-                    time_slot_elements = driver.find_elements(By.XPATH, "//div[contains(@class,'time-slot-container')]//button[not(@disabled)]//div[contains(@class,'time-slot-time')]")
-
-                    if time_slot_elements:
-                        for slot_element in time_slot_elements:
-                            slot_time = slot_element.text.strip()
-                            appointment_info = f"APPOINTMENT FOUND: {location_name} on {current_date.strftime('%A, %B %d, %Y')} at {slot_time}"
-                            print(appointment_info)
-                            found_appointments.append(appointment_info)
-                        # Once slots are found for a day, no need to click other identical day numbers (if any)
-                        break
-                    else:
-                        print(f"No time slots found for {location_name} on {current_date.strftime('%Y-%m-%d')} after clicking date.")
-                        # Go back to calendar view by trying to click the date again (if it exists)
-                        # This is a bit of a hack; site behavior might vary
-                        try:
-                            re_click_date = driver.find_element(By.XPATH, date_xpath)
-                            re_click_date.click() # to deselect or refresh
-                            time.sleep(0.5)
-                        except:
-                            pass
-
-
-                except Exception as e:
-                    print(f"Error when clicking date {current_date.day} or processing slots for {location_name}: {e}")
-                # Break from iterating date_elements if appointments are found for this day
-                if found_appointments and any(current_date.strftime('%A, %B %d, %Y') in appt for appt in found_appointments):
-                    break
-            if found_appointments and any(current_date.strftime('%A, %B %d, %Y') in appt for appt in found_appointments):
-                    print(f"Finished checking {current_date.strftime('%Y-%m-%d')} for {location_name} as appointments were found.")
-
-        except NoSuchElementException:
-            print(f"No available slots for {location_name} on {current_date.strftime('%Y-%m-%d')} (day {current_date.day}).")
-        except Exception as e:
-            print(f"General error checking date {current_date.strftime('%Y-%m-%d')} for {location_name}: {e}")
-
-
-    # After checking all dates for a location, go back to the location selection page
+    # Simplified check: Look for the "Next Available" div with id "SingleDateTime"
     try:
-        print(f"Trying to go back to location selection from {location_name} calendar.")
-        # The "Back to Locations" or similar button might appear after selecting a location
-        # Or, if already on calendar, a "Change Location" or "Back" button to service type then location
-        # This site's navigation can be tricky. Let's try a general back button first if specific one fails.
-        # Common text for such buttons: "Change Location", "Back to Locations", or a general "Back"
-        # It seems after clicking a location, you land on its calendar.
-        # We need to go back to the list of locations.
-        # The "Schedule an Appointment" takes you to categories, then services, then locations.
-        # So, we might need to re-navigate if a direct "back to locations" isn't obvious.
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "SingleDateTime")))
+        single_date_time_div = driver.find_element(By.ID, "SingleDateTime")
 
-        # Try clicking the "Services" breadcrumb or a similar navigation element
-        # This is an assumption based on typical web navigation patterns.
-        # Update: The site has a "Back" button on the calendar page that usually takes you to location list.
-        # Let's look for a button that would take us back to the location list.
-        # The class "p-button-link" and "ng-star-inserted" seems to be used for back type buttons.
-        # Or, a button with text "Change Location" or similar.
+        data_datetime_str = single_date_time_div.get_attribute("data-datetime") # e.g., "7/18/2025 12:25:00 PM"
+        visible_text = single_date_time_div.text.strip() # e.g., "18 July 2025 at 12:25 PM"
 
-        # Attempt 1: Look for a "Change Location" button (if present on calendar page)
-        change_location_button = driver.find_elements(By.XPATH, "//button[contains(., 'Change Location')]")
-        if change_location_button:
-            change_location_button[0].click()
-            print("Clicked 'Change Location' button.")
-            time.sleep(2)
-            return found_appointments
+        print(f"Found 'Next Available' div: {visible_text} (data: {data_datetime_str})")
 
-        # Attempt 2: Look for a general "Back" button that might lead to location list
-        # This is highly dependent on the current page state.
-        # The "Back" button on the calendar page itself.
-        back_buttons = driver.find_elements(By.XPATH, "//button[contains(@class, 'p-button-link') and .//span[contains(text(), 'Back')]] | //button[contains(text(),'Back')]")
-        if back_buttons:
-            # Prefer a more specific back if available
-            specific_back = [b for b in back_buttons if "Locations" in b.text or "Services" in b.text]
-            if specific_back:
-                specific_back[0].click()
-                print("Clicked a specific 'Back' button.")
-            else:
-                # Try the most generic one, usually the first one found if it's simple "Back"
-                back_buttons[0].click()
-                print("Clicked a generic 'Back' button.")
-            time.sleep(2)
+        if data_datetime_str:
+            # Try parsing with AM/PM first
+            try:
+                appointment_dt = datetime.strptime(data_datetime_str, "%m/%d/%Y %I:%M:%S %p")
+            except ValueError:
+                # Fallback if AM/PM is missing or format is slightly different (e.g. 24-hour time)
+                try:
+                    appointment_dt = datetime.strptime(data_datetime_str, "%m/%d/%Y %H:%M:%S")
+                except ValueError as ve_fallback:
+                    print(f"Could not parse data-datetime string '{data_datetime_str}': {ve_fallback}")
+                    appointment_dt = None
+
+            if appointment_dt:
+                now = datetime.now()
+                # Check if the appointment is today or within the next DAYS_TO_CHECK days
+                # And also ensure it's not in the past (though 'Next Available' shouldn't be)
+                if now.date() <= appointment_dt.date() <= (now + timedelta(days=DAYS_TO_CHECK)).date():
+                    # Check if it's a weekday (Monday=0, Sunday=6)
+                    if appointment_dt.weekday() < 5:
+                        appointment_info = f"APPOINTMENT FOUND: {location_name} on {appointment_dt.strftime('%A, %B %d, %Y at %I:%M %p')}"
+                        print(appointment_info)
+                        found_appointments.append(appointment_info)
+                    else:
+                        print(f"Next available slot at {location_name} ({appointment_dt.strftime('%A, %B %d')}) is a weekend. Skipping.")
+                else:
+                    print(f"Next available slot at {location_name} ({appointment_dt.strftime('%A, %B %d')}) is outside the desired {DAYS_TO_CHECK}-day window.")
         else:
-            print("No obvious 'Back' or 'Change Location' button found. Re-navigating from start for next location.")
-            # If all else fails, re-navigate from the start (this is inefficient but robust)
-            # This part is removed to avoid re-navigation for each location if back fails once
-            # as it makes the script very slow. The main loop will handle re-navigation if needed.
-            pass
+            print(f"No 'data-datetime' attribute found in SingleDateTime div for {location_name}.")
 
+    except TimeoutException:
+        print(f"No 'Next Available' (SingleDateTime div) found for {location_name} within 10 seconds. Checking calendar as fallback.")
+        # --- Fallback to detailed calendar check if SingleDateTime is not found ---
+        # This part is removed as per user request to only check SingleDateTime
+        print("Fallback calendar check is currently disabled as per user request.")
+        pass # If SingleDateTime not found, we assume no quick appointment.
+
+    except NoSuchElementException:
+        print(f"No 'Next Available' (SingleDateTime div) found for {location_name}. Assuming no quick appointment.")
     except Exception as e:
-        print(f"Error trying to navigate back to location selection from {location_name}: {e}")
-        # If back navigation fails, the next call to get_available_locations might fail or the script might get stuck.
-        # Consider re-navigating from scratch if this becomes a persistent issue.
+        print(f"Error checking SingleDateTime div for {location_name}: {e}")
+
+    # After checking, navigate back to the office selection page
+    try:
+        print(f"Trying to go back to office selection from {location_name}'s date/time page.")
+        # The "Office" page HTML shows a back button with id="BackButton"
+        click_element(driver, By.ID, "BackButton")
+        print("Clicked 'Back' button (ID: BackButton).")
+        time.sleep(1.5) # Allow time to return to office list
+    except Exception as e:
+        print(f"Error trying to navigate back to office selection from {location_name} using BackButton ID: {e}")
+        # As a more robust fallback if ID fails, try common back button texts/classes
+        try:
+            change_location_button = driver.find_elements(By.XPATH, "//button[contains(., 'Change Location')] | //button[contains(@class, 'p-button-link') and .//span[contains(text(), 'Back')]] | //button[contains(text(),'Back')]")
+            if change_location_button:
+                change_location_button[0].click()
+                print("Clicked a fallback 'Back' or 'Change Location' button.")
+                time.sleep(1.5)
+            else:
+                print("No obvious 'Back' or 'Change Location' button found. Re-navigation might be needed if loop continues.")
+        except Exception as e_fallback_back:
+            print(f"Error with fallback back button: {e_fallback_back}")
     return found_appointments
 
 def main():
@@ -277,11 +223,12 @@ def main():
             # If not on the location selection page (e.g., after checking a location's calendar),
             # we need to ensure we are back there or re-navigate.
             # A simple check: are location elements visible?
+            # This check should be consistent with how get_available_locations finds elements.
             try:
                 WebDriverWait(driver, 3).until(
-                    EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'location-name-container')]"))
+                    EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'QflowObjectItem') and contains(@class, 'displaydata-text') and @data-id]"))
                 )
-                print("Currently on location selection page.")
+                print("Currently on location selection page (found QflowObjectItem with data-id).")
             except TimeoutException:
                 print("Not on location selection page. Attempting to re-navigate to service selection...")
                 # This means the 'back' navigation in check_location_appointments didn't work as expected.
